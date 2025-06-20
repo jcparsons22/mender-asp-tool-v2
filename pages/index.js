@@ -1,122 +1,174 @@
-import { useState } from 'react';
-import data from '../public/avg_price_data.json';
+import { useState, useEffect } from "react";
+import avgData from "../public/avg_price_data.json";
 
-export default function Home() {
-  const [category, setCategory] = useState('');
-  const [make, setMake] = useState('');
-  const [model, setModel] = useState('');
-  const [processor, setProcessor] = useState('');
-  const [memory, setMemory] = useState('');
-  const [hdd, setHdd] = useState('');
-  const [grade, setGrade] = useState('');
-  const [result, setResult] = useState(null);
+const ramAdjustments = {
+  "4GB": -2,
+  "8GB": 0,
+  "16GB": 7,
+  "32GB": 17,
+  "64GB": 37,
+};
 
-  const ramAdjustments = { '4GB': -2, '8GB': 0, '16GB': 7, '32GB': 17, '64GB': 37 };
-  const hddAdjustments = { '128GB': 3, '256GB': 0, '512GB': 15, '1TB': 25, '2TB': 50 };
+const hddAdjustments = {
+  "128GB": 3,
+  "256GB": 7,
+  "512GB": 15,
+  "1TB": 25,
+  "2TB": 50,
+};
 
-  const categories = [...new Set(data.map(row => row['Category Clean']))];
-  const makes = [...new Set(data.map(row => row['Make Clean'] === 'PANASONIC CORPORATION' ? 'PANASONIC' : row['Make Clean']))];
-  const models = [...new Set(data.filter(row => row['Make Clean'] === make || (make === 'PANASONIC' && row['Make Clean'] === 'PANASONIC CORPORATION')).map(row => row['Model']))];
-  const processors = [...new Set(data.filter(row => row['Model'] === model && (row['Make Clean'] === make || (make === 'PANASONIC' && row['Make Clean'] === 'PANASONIC CORPORATION'))).map(row => row['Processor Clean']).filter(p => p && p !== 'Other'))];
-  const memoryOptions = ['4GB', '8GB', '16GB', '32GB', '64GB'];
-  const hddOptions = ['128GB', '256GB', '512GB', '1TB', '2TB'];
-  const gradeOptions = ['A', 'B', 'C', 'F'];
+const gradeAdjustments = {
+  A: 0.15,
+  B: 0,
+  C: -0.15,
+  F: "fixed",
+};
 
-  const is8thGenOrHigher = (proc) => {
-    const p = proc.toUpperCase();
-    return p.includes('8') || p.includes('9') || p.includes('10') || p.includes('11') || p.includes('12') || p.includes('13');
+const fGradePrices = {
+  old: 15,
+  new: 40,
+};
+
+const cpuUpgradeAdjustment = 25;
+
+function App() {
+  const [form, setForm] = useState({
+    type: "",
+    make: "",
+    model: "",
+    cpu: "",
+    ram: "8GB",
+    hdd: "256GB",
+    grade: "B",
+  });
+
+  const [options, setOptions] = useState({
+    make: [],
+    model: [],
+    cpu: [],
+  });
+
+  const [price, setPrice] = useState(null);
+
+  useEffect(() => {
+    const makes = [...new Set(avgData.map((d) => normalize(d.make)))];
+    setOptions((prev) => ({ ...prev, make: makes }));
+  }, []);
+
+  useEffect(() => {
+    if (form.make) {
+      const models = avgData
+        .filter((d) => normalize(d.make) === form.make && normalize(d.type) === form.type)
+        .map((d) => d.model);
+      setOptions((prev) => ({ ...prev, model: [...new Set(models)] }));
+    }
+  }, [form.make, form.type]);
+
+  useEffect(() => {
+    if (form.make && form.model) {
+      const cpus = avgData
+        .filter((d) => d.make && normalize(d.make) === form.make && d.model === form.model)
+        .map((d) => normalizeCPU(d.cpu));
+      setOptions((prev) => ({ ...prev, cpu: [...new Set(cpus)] }));
+    }
+  }, [form.model]);
+
+  const normalize = (text) =>
+    text?.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/PANASONICCORPORATION/, "PANASONIC") || "";
+
+  const normalizeCPU = (cpu) => {
+    const match = cpu?.match(/i[3579]\s?-?\s?(\d{4,5})/i);
+    if (!match) return "Other";
+    const series = match[1];
+    const gen = parseInt(series.substring(0, series.length - 3));
+    if (series.startsWith("13")) return `Intel i${series[0]} 13th Gen`;
+    if (series.startsWith("12")) return `Intel i${series[0]} 12th Gen`;
+    if (series.startsWith("11")) return `Intel i${series[0]} 11th Gen`;
+    if (series.startsWith("10")) return `Intel i${series[0]} 10th Gen`;
+    if (gen === 9) return `Intel i${series[0]} 9th Gen`;
+    if (gen === 8) return `Intel i${series[0]} 8th Gen`;
+    return `Intel i${series[0]} Older Gen`;
   };
 
-  const isI7 = (proc) => proc.toUpperCase().includes('I7');
+  const handleChange = (key, value) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (key === "make") setForm((prev) => ({ ...prev, model: "", cpu: "" }));
+    if (key === "model") setForm((prev) => ({ ...prev, cpu: "" }));
+  };
 
-  const handleSubmit = () => {
-    const isF = grade === 'F';
-    const is8thGen = is8thGenOrHigher(processor);
-
-    if (isF) {
-      setResult(is8thGen ? '$40.00' : '$15.00');
-      return;
-    }
-
-    const baseline = data.find(row =>
-      (row['Make Clean'] === make || (make === 'PANASONIC' && row['Make Clean'] === 'PANASONIC CORPORATION')) &&
-      row['Model'] === model &&
-      row['Processor Clean'].includes('i5') &&
-      row['Memory Clean'] === '8GB' &&
-      row['Grade'] === 'B'
+  const getASP = () => {
+    const baseEntry = avgData.find(
+      (d) =>
+        normalize(d.make) === form.make &&
+        d.model === form.model &&
+        normalizeCPU(d.cpu) === form.cpu &&
+        normalize(d.type) === form.type
     );
 
-    if (!baseline) {
-      setResult('No baseline data found');
-      return;
+    let asp = baseEntry?.asp;
+
+    // If no exact ASP found, try fallback by model only
+    if (!asp) {
+      const modelFallback = avgData.find(
+        (d) => normalize(d.make) === form.make && d.model === form.model
+      );
+      asp = modelFallback?.asp;
     }
 
-    let asp = baseline['Sales Price'];
-    asp += ramAdjustments[memory] || 0;
-    asp += hddAdjustments[hdd] || 0;
+    if (!asp && form.grade === "F") {
+      const is8thGenOrNewer = form.cpu.includes("8th") || form.cpu.includes("9th") || form.cpu.includes("10") || form.cpu.includes("11") || form.cpu.includes("12") || form.cpu.includes("13");
+      asp = is8thGenOrNewer ? fGradePrices.new : fGradePrices.old;
+    }
 
-    if (grade === 'A') asp *= 1.15;
-    if (grade === 'C') asp *= 0.85;
-    if (isI7(processor)) asp += 25;
+    if (!asp) return setPrice("No baseline data found");
 
-    setResult(`$${asp.toFixed(2)}`);
+    if (form.grade !== "F") {
+      const ramAdj = ramAdjustments[form.ram] || 0;
+      const hddAdj = hddAdjustments[form.hdd] || 0;
+      const cpuAdj = form.cpu.includes("i7") && !baseEntry.cpu.includes("i7") ? cpuUpgradeAdjustment : 0;
+      const gradeAdj = gradeAdjustments[form.grade] ?? 0;
+      const adjusted = asp + ramAdj + hddAdj + cpuAdj;
+      const finalPrice = adjusted * (1 + gradeAdj);
+      setPrice(`$${finalPrice.toFixed(2)}`);
+    } else {
+      setPrice(`$${asp.toFixed(2)}`);
+    }
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: '2rem auto', fontFamily: 'sans-serif' }}>
-      <h1 style={{ fontSize: '2rem', color: '#23714D', textAlign: 'center' }}>Mender ASP Estimator</h1>
-
-      <div><label>1. What type of device are you pricing?</label><br />
-        <select value={category} onChange={e => setCategory(e.target.value)}>
-          <option value="">Select device type...</option>
-          {categories.map(c => <option key={c}>{c}</option>)}
-        </select>
+    <div style={{ fontFamily: "Arial", padding: 40, textAlign: "center" }}>
+      <h1 style={{ color: "#2F5D3A" }}>Mender ASP Estimator</h1>
+      <div style={{ maxWidth: 500, margin: "0 auto", textAlign: "left" }}>
+        {[
+          { label: "What type of device are you pricing?", key: "type", values: ["Laptop", "Desktop", "AIO"] },
+          { label: "What is the manufacturer?", key: "make", values: options.make },
+          { label: "What is the model number?", key: "model", values: options.model },
+          { label: "What processor does it have?", key: "cpu", values: options.cpu },
+          { label: "How much RAM?", key: "ram", values: ["4GB", "8GB", "16GB", "32GB", "64GB"] },
+          { label: "What is the hard drive size?", key: "hdd", values: ["128GB", "256GB", "512GB", "1TB", "2TB"] },
+          { label: "What is the condition?", key: "grade", values: ["A", "B", "C", "F"] },
+        ].map((q, i) => (
+          <div key={i} style={{ marginBottom: 12 }}>
+            <label>{i + 1}. {q.label}</label>
+            <select
+              value={form[q.key]}
+              onChange={(e) => handleChange(q.key, e.target.value)}
+              style={{ width: "100%", padding: 6, marginTop: 4 }}
+            >
+              <option value="">Select...</option>
+              {q.values.map((val) => (
+                <option key={val} value={val}>{val}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+        <button onClick={getASP} style={{ width: "100%", padding: 10, background: "#2F5D3A", color: "#fff", fontWeight: "bold" }}>
+          Get ASP
+        </button>
+        {price && <h3 style={{ marginTop: 20 }}>Estimated ASP: {price}</h3>}
       </div>
-
-      <div><label>2. What is the manufacturer?</label><br />
-        <select value={make} onChange={e => setMake(e.target.value)}>
-          <option value="">Select brand...</option>
-          {makes.map(m => <option key={m}>{m}</option>)}
-        </select>
-      </div>
-
-      <div><label>3. What is the model number?</label><br />
-        <select value={model} onChange={e => setModel(e.target.value)}>
-          <option value="">Select model...</option>
-          {models.map(m => <option key={m}>{m}</option>)}
-        </select>
-      </div>
-
-      <div><label>4. What processor does it have?</label><br />
-        <select value={processor} onChange={e => setProcessor(e.target.value)}>
-          <option value="">Select processor...</option>
-          {processors.map(p => <option key={p}>{p}</option>)}
-        </select>
-      </div>
-
-      <div><label>5. How much RAM?</label><br />
-        <select value={memory} onChange={e => setMemory(e.target.value)}>
-          <option value="">Select RAM...</option>
-          {memoryOptions.map(mem => <option key={mem}>{mem}</option>)}
-        </select>
-      </div>
-
-      <div><label>6. What is the hard drive size?</label><br />
-        <select value={hdd} onChange={e => setHdd(e.target.value)}>
-          <option value="">Select drive size...</option>
-          {hddOptions.map(h => <option key={h}>{h}</option>)}
-        </select>
-      </div>
-
-      <div><label>7. What is the condition?</label><br />
-        <select value={grade} onChange={e => setGrade(e.target.value)}>
-          <option value="">Select condition...</option>
-          {gradeOptions.map(g => <option key={g}>{g}</option>)}
-        </select>
-      </div>
-
-      <button style={{ marginTop: '1rem', backgroundColor: '#23714D', color: 'white', padding: '0.5rem 1rem' }} onClick={handleSubmit}>Get ASP</button>
-      {result && <div style={{ marginTop: '1rem', fontWeight: 'bold', fontSize: '1.2rem' }}>{result}</div>}
     </div>
   );
 }
+
+export default App;
